@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mineru-pdf-service"
+version = "1.0.0"
+description = "PDF to Markdown API using the public MinerU 4 SDK"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+  "mineru==4.0.12",
+  "fastapi>=0.121.3,<1",
+  "uvicorn>=0.38,<1",
+  "python-multipart>=0.0.20,<1",
+  "pypdf>=6,<7",
+  "cachetools>=6.2.2,<8",
+  "reportlab>=4,<6",
+  "beautifulsoup4>=4.13.5,<5",
+]
+
+[project.optional-dependencies]
+gpu = ["mineru[torch]==4.0.12"]
+test = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.14,<1"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]

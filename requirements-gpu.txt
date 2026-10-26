@@ -1,0 +1,8 @@
+# Compatibility constraints for the vLLM 0.29 / Torch 2.13 image.
+fastapi==0.136.3
+numpy==2.2.6
+opentelemetry-api==1.40.0
+protobuf>=6.30.2,<7
+python-dateutil>=2.9,<3
+setuptools>=77.0.3,<81
+huggingface-hub>=1.5,<2

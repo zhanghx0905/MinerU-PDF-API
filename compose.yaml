@@ -1,0 +1,83 @@
+services:
+  mineru-vlm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
+    init: true
+    restart: unless-stopped
+    entrypoint: ["vllm", "serve"]
+    command:
+      - /models/models/MinerU2.5-Pro-2605-1.2B
+      - --served-model-name
+      - mineru
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.35}"
+      - --max-model-len
+      - "8192"
+    environment:
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+    volumes:
+      - ${MODEL_DIR:-models}:/models:ro
+    shm_size: 8gb
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 180s
+      retries: 20
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_ID:-0}"]
+              capabilities: [gpu]
+
+  mineru-api:
+    build:
+      context: .
+      args:
+        VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
+        SMALL_BACKEND: ${SMALL_BACKEND:-torch}
+    image: mineru-pdf-service:4.0.12
+    command: ["app.main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", "${API_PROCESSES:-1}"]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      mineru-vlm:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-3888}:3000"
+    environment:
+      MINERU_HOME: /models
+      MINERU_MODEL_SOURCE: ${MINERU_MODEL_SOURCE:-modelscope}
+      MINERU_MODEL_SMALL_BACKEND: ${SMALL_BACKEND:-torch}
+      MINERU_MODEL_VLM_SERVER_URL: http://mineru-vlm:8000
+      MINERU_MODEL_VLM_MODEL: mineru
+      PARSE_TIER: ${PARSE_TIER:-standard}
+      PRELOAD_MODELS: ${PRELOAD_MODELS:-true}
+      PARSE_WORKERS: ${PARSE_WORKERS:-2}
+      MAX_PENDING: ${MAX_PENDING:-8}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      MAX_PAGES: ${MAX_PAGES:-1000}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-6000}
+      CACHE_BYTES: ${CACHE_BYTES:-134217728}
+      CACHE_TTL: ${CACHE_TTL:-3600}
+    volumes:
+      - ${MODEL_DIR:-models}:/models
+      - model-cache:/root/.cache
+    stop_grace_period: 120s
+    shm_size: 8gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_ID:-0}"]
+              capabilities: [gpu]
+
+volumes:
+  models:
+  model-cache:
