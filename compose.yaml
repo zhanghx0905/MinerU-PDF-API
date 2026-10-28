@@ -1,4 +1,122 @@
 services:
+  mineru-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: ${API_IMAGE:-mineru-api:1.1.0}
+    init: true
+    restart: unless-stopped
+    command: ["app.main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", "${API_PROCESSES:-1}", "--no-access-log"]
+    ports:
+      - "${API_PORT:-3888}:3000"
+    environment:
+      SERVICE_MODE: queue
+      NVIDIA_VISIBLE_DEVICES: void
+      QUEUE_DATABASE: /data/queue.sqlite3
+      OBJECT_DIR: /data/objects
+      OBJECT_STORAGE: ${OBJECT_STORAGE:-local}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:?Set WORKER_API_TOKEN in .env}
+      MODEL_REVISION: ${MODEL_REVISION:-MinerU2.5-Pro-2605-1.2B}
+      PARSE_TIER: ${PARSE_TIER:-standard}
+      MAX_PENDING: ${MAX_PENDING:-64}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      MAX_PAGES: ${MAX_PAGES:-1000}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-6000}
+      CACHE_BYTES: ${CACHE_BYTES:-134217728}
+      CACHE_TTL: ${CACHE_TTL:-3600}
+      QUEUE_MAX_ATTEMPTS: ${QUEUE_MAX_ATTEMPTS:-3}
+      QUEUE_POLL_SECONDS: ${QUEUE_POLL_SECONDS:-0.25}
+      QUEUE_MAX_WORK: ${QUEUE_MAX_WORK:-4096}
+      QUEUE_MAX_UPLOADS: ${QUEUE_MAX_UPLOADS:-8}
+      QUEUE_MAX_SYNC_WAITERS: ${QUEUE_MAX_SYNC_WAITERS:-8}
+      QUEUE_MAX_TRANSFERS: ${QUEUE_MAX_TRANSFERS:-8}
+      QUEUE_TRANSFER_SECONDS: ${QUEUE_TRANSFER_SECONDS:-120}
+      QUEUE_UPLOAD_SECONDS: ${QUEUE_UPLOAD_SECONDS:-120}
+      QUEUE_LEASE_SECONDS: ${QUEUE_LEASE_SECONDS:-60}
+      QUEUE_HEARTBEAT_SECONDS: ${QUEUE_HEARTBEAT_SECONDS:-10}
+      QUEUE_MAX_QUEUE_SECONDS: ${QUEUE_MAX_QUEUE_SECONDS:-300}
+      QUEUE_RETENTION_SECONDS: ${QUEUE_RETENTION_SECONDS:-86400}
+      QUEUE_MAX_RESULT_BYTES: ${QUEUE_MAX_RESULT_BYTES:-67108864}
+    volumes:
+      - queue-data:/data
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    stop_grace_period: 30s
+
+  mineru-worker:
+    build:
+      context: .
+      args:
+        VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
+        SMALL_BACKEND: ${SMALL_BACKEND:-torch}
+    image: ${WORKER_IMAGE:-mineru-worker:1.1.0}
+    entrypoint: ["python3", "-m", "app.worker"]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      mineru-api:
+        condition: service_healthy
+      mineru-vlm-gateway:
+        condition: service_healthy
+    environment:
+      MINERU_HOME: /models
+      MINERU_MODEL_SOURCE: ${MINERU_MODEL_SOURCE:-modelscope}
+      MINERU_MODEL_SMALL_BACKEND: ${SMALL_BACKEND:-torch}
+      MINERU_MODEL_VLM_SERVER_URL: http://mineru-vlm-gateway:8001
+      MINERU_MODEL_VLM_MODEL: mineru
+      MINERU_PROFILE_STAGES: "true"
+      WORKER_API_URL: http://mineru-api:3000
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:?Set WORKER_API_TOKEN in .env}
+      MODEL_REVISION: ${MODEL_REVISION:-MinerU2.5-Pro-2605-1.2B}
+      PARSE_TIER: ${PARSE_TIER:-standard}
+      PRELOAD_MODELS: ${PRELOAD_MODELS:-true}
+      PARSE_WORKERS: ${PARSE_WORKERS:-2}
+      WORKER_MAX_RUN_SECONDS: ${WORKER_MAX_RUN_SECONDS:-6000}
+      QUEUE_HEARTBEAT_SECONDS: ${QUEUE_HEARTBEAT_SECONDS:-10}
+      QUEUE_LEASE_SECONDS: ${QUEUE_LEASE_SECONDS:-60}
+      QUEUE_POLL_SECONDS: ${QUEUE_POLL_SECONDS:-0.25}
+    volumes:
+      - ${MODEL_DIR:-models}:/models
+      - model-cache:/root/.cache
+    shm_size: 8gb
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    healthcheck:
+      disable: true
+    stop_grace_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_ID:-0}"]
+              capabilities: [gpu]
+
+  mineru-vlm-gateway:
+    image: ${API_IMAGE:-mineru-api:1.1.0}
+    command: ["app.vlm_gateway:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log"]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      mineru-vlm:
+        condition: service_healthy
+    environment:
+      NVIDIA_VISIBLE_DEVICES: void
+      VLM_UPSTREAMS: ${VLM_UPSTREAMS:-http://mineru-vlm:8000}
+      VLM_MAX_ACTIVE_PER_REPLICA: ${VLM_MAX_ACTIVE_PER_REPLICA:-64}
+      VLM_MAX_WAITING: ${VLM_MAX_WAITING:-128}
+      VLM_QUEUE_SECONDS: ${VLM_QUEUE_SECONDS:-60}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   mineru-vlm:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
     init: true
@@ -35,49 +153,7 @@ services:
               device_ids: ["${GPU_ID:-0}"]
               capabilities: [gpu]
 
-  mineru-api:
-    build:
-      context: .
-      args:
-        VLLM_IMAGE: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
-        SMALL_BACKEND: ${SMALL_BACKEND:-torch}
-    image: mineru-pdf-service:4.0.12
-    command: ["app.main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", "${API_PROCESSES:-1}"]
-    init: true
-    restart: unless-stopped
-    depends_on:
-      mineru-vlm:
-        condition: service_healthy
-    ports:
-      - "${API_PORT:-3888}:3000"
-    environment:
-      MINERU_HOME: /models
-      MINERU_MODEL_SOURCE: ${MINERU_MODEL_SOURCE:-modelscope}
-      MINERU_MODEL_SMALL_BACKEND: ${SMALL_BACKEND:-torch}
-      MINERU_MODEL_VLM_SERVER_URL: http://mineru-vlm:8000
-      MINERU_MODEL_VLM_MODEL: mineru
-      PARSE_TIER: ${PARSE_TIER:-standard}
-      PRELOAD_MODELS: ${PRELOAD_MODELS:-true}
-      PARSE_WORKERS: ${PARSE_WORKERS:-2}
-      MAX_PENDING: ${MAX_PENDING:-8}
-      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
-      MAX_PAGES: ${MAX_PAGES:-1000}
-      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-6000}
-      CACHE_BYTES: ${CACHE_BYTES:-134217728}
-      CACHE_TTL: ${CACHE_TTL:-3600}
-    volumes:
-      - ${MODEL_DIR:-models}:/models
-      - model-cache:/root/.cache
-    stop_grace_period: 120s
-    shm_size: 8gb
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${GPU_ID:-0}"]
-              capabilities: [gpu]
-
 volumes:
+  queue-data:
   models:
   model-cache:

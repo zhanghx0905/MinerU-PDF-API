@@ -1,16 +1,19 @@
 """Reuse lightweight parsers and shared models while keeping request state isolated."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Lock
+
+from .metrics import record_sdk_stages, timed
 
 
 @dataclass(frozen=True)
 class ParseOutput:
     markdown: str
     pages: int
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 def markdown_without_images(result):
@@ -86,11 +89,12 @@ class MinerUEngine:
         with TemporaryDirectory(prefix="mineru-") as directory:
             path = Path(directory) / "document.pdf"
             path.write_bytes(pdf_bytes)
-            result = parser.parse(path)
-            return ParseOutput(
-                markdown=result.markdown() if encode_img else markdown_without_images(result),
-                pages=len(result.pages),
-            )
+            timings = {}
+            with timed(timings, "sdk.total"), record_sdk_stages(timings):
+                result = parser.parse(path)
+            with timed(timings, "markdown.render"):
+                markdown = result.markdown() if encode_img else markdown_without_images(result)
+            return ParseOutput(markdown=markdown, pages=len(result.pages), timings=timings)
 
     def close(self):
         for parser in self._parsers.values():

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
+    service_mode: str = "inline"
     tier: str = "standard"
     preload_models: bool = True
     parse_workers: int = 2
@@ -17,6 +18,8 @@ class Settings:
     cache_ttl: float = 3600
 
     def __post_init__(self):
+        if self.service_mode not in {"inline", "queue"}:
+            raise ValueError("SERVICE_MODE must be inline or queue")
         if self.tier not in {"flash", "basic", "standard", "advanced"}:
             raise ValueError("PARSE_TIER must be flash, basic, standard or advanced")
         for name in (
@@ -36,6 +39,7 @@ class Settings:
     def from_env(cls):
         defaults = cls()
         return cls(
+            service_mode=os.getenv("SERVICE_MODE", defaults.service_mode),
             tier=os.getenv("PARSE_TIER", defaults.tier),
             preload_models=os.getenv("PRELOAD_MODELS", "true").lower() in {"1", "true", "yes"},
             parse_workers=int(os.getenv("PARSE_WORKERS", defaults.parse_workers)),

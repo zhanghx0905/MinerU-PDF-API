@@ -8,6 +8,9 @@ __pycache__
 tests
 docs
 artifacts
+data
+*.sqlite*
+*.db
 output
 models
 model-store
@@ -26,3 +29,4 @@ id_rsa*
 id_ed25519*
 .idea
 .vscode
+*.db-*

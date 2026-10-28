@@ -1,0 +1,27 @@
+ARG API_BASE_IMAGE=python:3.12-slim
+FROM ${API_BASE_IMAGE} AS sqlite-builder
+RUN if ! command -v cc >/dev/null; then \
+      apt-get update && apt-get install -y --no-install-recommends build-essential \
+      && rm -rf /var/lib/apt/lists/*; fi
+COPY scripts/build_sqlite.py /tmp/build_sqlite.py
+ARG SQLITE_SOURCE_URL=https://www.sqlite.org/2026/sqlite-amalgamation-3510300.zip
+RUN python /tmp/build_sqlite.py --url "${SQLITE_SOURCE_URL}" --output /opt/sqlite
+
+FROM ${API_BASE_IMAGE}
+COPY --from=sqlite-builder /opt/sqlite /opt/sqlite
+ENV LD_PRELOAD="/opt/sqlite/lib/libsqlite3.so.0" \
+    LD_LIBRARY_PATH="/opt/sqlite/lib" \
+    SERVICE_MODE=queue PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY pyproject.toml requirements-gpu.txt ./
+COPY scripts/install_dependencies.py /tmp/install_dependencies.py
+RUN python /tmp/install_dependencies.py \
+    && python -m pip install --no-cache-dir 'boto3>=1.35,<2'
+COPY app ./app
+RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation . \
+    && python -c "from app.sqlite_runtime import ensure_safe_wal; ensure_safe_wal()"
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health', timeout=3)"
+ENTRYPOINT ["python", "-m", "uvicorn"]
+CMD ["app.main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", "1", "--no-access-log"]

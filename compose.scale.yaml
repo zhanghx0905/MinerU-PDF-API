@@ -1,0 +1,37 @@
+# Optional second GPU parsing unit; use with compose.yaml.
+services:
+  mineru-worker-b:
+    extends:
+      file: compose.yaml
+      service: mineru-worker
+    depends_on:
+      mineru-api:
+        condition: service_healthy
+      mineru-vlm-b:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices: !override
+            - driver: nvidia
+              device_ids: ["${GPU_ID_B:-1}"]
+              capabilities: [gpu]
+
+  mineru-vlm-b:
+    extends:
+      file: compose.yaml
+      service: mineru-vlm
+    deploy:
+      resources:
+        reservations:
+          devices: !override
+            - driver: nvidia
+              device_ids: ["${GPU_ID_B:-1}"]
+              capabilities: [gpu]
+
+  mineru-vlm-gateway:
+    environment:
+      VLM_UPSTREAMS: http://mineru-vlm:8000,http://mineru-vlm-b:8000
+    depends_on:
+      mineru-vlm-b:
+        condition: service_healthy
