@@ -2,6 +2,8 @@
 
 基于 MinerU 4.0.12 的 PDF 转 Markdown 服务，支持 flash/basic/standard/advanced。SQLite WAL 保存全局任务、幂等记录和阶段指标；CPU API、GPU worker 和 vLLM 分开运行。
 
+调度设计见[实现与异常处理](docs/scheduling.md)，包括任务流程、状态机、领取规则、租约重试及故障边界；部署操作见[运维与扩容](docs/scaling.md)。
+
 ## 部署
 
 需要 Docker Compose 2.24.4+、NVIDIA Container Toolkit、兼容 CUDA 13.0 的驱动，以及本地持久磁盘。API 镜像自行编译并校验 SQLite 3.51.3，避免依赖系统中未修复并发 WAL 问题的旧版本。
@@ -63,7 +65,7 @@ GPU_ID=0 GPU_ID_B=1 docker compose -f compose.yaml -f compose.scale.yaml up -d \
 
 覆盖配置明确替换 GPU 设备列表。所有 worker 从同一全局队列领取任务，不拥有本地待执行队列。推理网关在独立 vLLM 副本之间按活跃请求数分配调用，并限制活跃和等待数量。
 
-远端机器也可以运行 `python -m app.worker`，只需配置 `WORKER_API_URL`、`WORKER_API_TOKEN`、模型和 GPU；worker 不读取 SQLite 文件，也不需要共享对象目录。SQLite 文件保留在调度端本地磁盘，不支持放在 NFS 上供多个主机打开；调度端当前不是跨节点主动主动部署。详见[架构与运维](docs/scaling.md)。
+远端机器也可以运行 `python -m app.worker`，需要配置 `WORKER_API_URL`、`WORKER_API_TOKEN`、模型、GPU 和 VLM 服务地址；worker 不读取 SQLite 文件，也不需要共享对象目录。SQLite 文件保留在调度端本地磁盘，不支持放在 NFS 上供多个主机打开；调度端当前不是跨节点主动主动部署。详见[运维与扩容](docs/scaling.md)。
 
 ## 主要配置
 
